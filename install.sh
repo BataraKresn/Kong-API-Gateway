@@ -50,7 +50,7 @@ check_docker() {
 check_docker_compose() {
     print_info "Checking Docker Compose installation..."
     
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    if ! command -v docker compose &> /dev/null; then
         print_error "Docker Compose is not installed. Please install Docker Compose first."
         exit 1
     fi
@@ -189,7 +189,7 @@ validate_env_file() {
 # Function to check required files exist
 check_required_files() {
     print_info "Checking required files..."
-    
+
     local required_files=("docker-compose.yml" "init-db.sql")
     local missing_files=()
     
@@ -217,7 +217,7 @@ check_required_files() {
 # Function to stop existing containers
 stop_existing() {
     print_info "Stopping existing Kong containers if any..."
-    docker-compose down --remove-orphans 2>/dev/null || true
+    docker compose down --remove-orphans 2>/dev/null || true
     print_success "Stopped any existing containers"
 }
 
@@ -227,11 +227,11 @@ start_services() {
     
     # Pull latest images
     print_info "Pulling Docker images..."
-    docker-compose pull
+    docker compose pull
     
     # Start services
     print_info "Starting containers..."
-    docker-compose up -d
+    docker compose up -d
     
     # Wait for services to be ready
     print_info "Waiting for services to be ready..."
@@ -239,7 +239,7 @@ start_services() {
     
     # Check service status
     print_info "Checking service status..."
-    docker-compose ps
+    docker compose ps
 }
 
 # Function to verify installation
@@ -247,7 +247,7 @@ verify_installation() {
     print_info "Verifying installation..."
     
     # Check PostgreSQL
-    if docker-compose exec -T postgres pg_isready -U postgres &> /dev/null; then
+    if docker compose exec -T postgres pg_isready -U postgres &> /dev/null; then
         print_success "PostgreSQL is ready"
     else
         print_warning "PostgreSQL might still be starting up"
@@ -360,30 +360,30 @@ main() {
             check_required_files
             create_directories
             check_env_file
-            print_success "Setup complete. Run 'docker-compose up -d' to start services."
+            print_success "Setup complete. Run 'docker compose up -d' to start services."
             ;;
         --stop)
             print_info "Stopping all services..."
-            docker-compose down
+            docker compose down
             print_success "All services stopped"
             ;;
         --restart)
             print_info "Restarting all services..."
-            docker-compose restart
+            docker compose restart
             print_success "All services restarted"
             ;;
         --logs)
-            docker-compose logs -f
+            docker compose logs -f
             ;;
         --status)
-            docker-compose ps
+            docker compose ps
             ;;
         --clean)
             read -p "This will remove all data including PostgreSQL data. Are you sure? (y/N): " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 print_warning "Stopping services and removing data..."
-                docker-compose down -v
+                docker compose down -v
                 rm -rf data logs
                 print_success "Clean complete"
             else

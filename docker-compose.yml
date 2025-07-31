@@ -1,14 +1,13 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database - Shared database instance with separate databases for Kong and Konga
   postgres:
-    image: postgres:13
+    image: postgres:11
     container_name: kong-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: postgres  # Default database
+      TZ: Asia/Jakarta
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       # Init script to create separate databases for Kong and Konga
@@ -19,7 +18,7 @@ services:
       - kong-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -31,8 +30,8 @@ services:
     environment:
       DATABASES_HOST: postgres
       DATABASES_PORT: 5432
-      DATABASES_USER: ${POSTGRES_USER:-postgres}
-      DATABASES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DATABASES_USER: ${POSTGRES_USER}
+      DATABASES_PASSWORD: ${POSTGRES_PASSWORD}
       DATABASES_DBNAME: kong
       POOL_MODE: ${PGBOUNCER_POOL_MODE:-transaction}
       MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-100}
@@ -40,6 +39,7 @@ services:
       MIN_POOL_SIZE: ${PGBOUNCER_MIN_POOL_SIZE:-5}
       RESERVE_POOL_SIZE: ${PGBOUNCER_RESERVE_POOL_SIZE:-3}
       AUTH_TYPE: ${PGBOUNCER_AUTH_TYPE:-md5}
+      TZ: Asia/Jakarta
     ports:
       - "6432:5432"  # PgBouncer port
     depends_on:
@@ -53,14 +53,14 @@ services:
 
   # Kong Database Bootstrap - Runs Kong migrations once
   kong-bootstrap:
-    image: kong:3.4-alpine
+    image: kong:3.4
     container_name: kong-bootstrap
     environment:
       KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres
+      KONG_PG_HOST: kong-postgres
       KONG_PG_PORT: 5432
-      KONG_PG_USER: ${POSTGRES_USER:-postgres}
-      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      KONG_PG_USER: ${POSTGRES_USER}
+      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD}
       KONG_PG_DATABASE: kong
     command: kong migrations bootstrap
     depends_on:
@@ -72,14 +72,14 @@ services:
 
   # Kong API Gateway - Main API Gateway service
   kong:
-    image: kong:3.4-alpine
+    image: kong:3.4
     container_name: kong-gateway
     environment:
       KONG_DATABASE: postgres
-      KONG_PG_HOST: ${KONG_USE_PGBOUNCER:-postgres}
-      KONG_PG_PORT: ${KONG_PG_PORT:-5432}
-      KONG_PG_USER: ${POSTGRES_USER:-postgres}
-      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      KONG_PG_HOST: ${KONG_USE_PGBOUNCER}
+      KONG_PG_PORT: ${KONG_PG_PORT}
+      KONG_PG_USER: ${POSTGRES_USER}
+      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD}
       KONG_PG_DATABASE: kong
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
@@ -92,6 +92,7 @@ services:
       KONG_NGINX_WORKER_CONNECTIONS: ${KONG_NGINX_WORKER_CONNECTIONS:-1024}
       KONG_MEM_CACHE_SIZE: ${KONG_MEM_CACHE_SIZE:-128m}
       KONG_LOG_LEVEL: ${KONG_LOG_LEVEL:-notice}
+      TZ: Asia/Jakarta
     volumes:
       - ./logs/kong:/var/log/kong
     ports:
@@ -111,25 +112,46 @@ services:
       timeout: 10s
       retries: 3
 
+  # konga-migrate:
+  #   image: pantsel/konga:0.14.9
+  #   container_name: konga-migrate
+  #   environment:
+  #     KONGA_ENV: ${KONGA_ENV:-production}
+  #     DB_ADAPTER: postgres
+  #     DB_HOST: postgres
+  #     DB_PORT: 5432
+  #     DB_USER: ${POSTGRES_USER}
+  #     DB_PASSWORD: ${POSTGRES_PASSWORD}
+  #     DB_DATABASE: konga
+  #   command: -c prepare
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks:
+  #     - kong-net
+  #   restart: "no"
+
   # Konga GUI - Web-based administration GUI for Kong
   konga:
-    image: pantsel/konga:latest
+    image: pantsel/konga:0.14.9
     container_name: konga-gui
     environment:
       DB_ADAPTER: postgres
-      DB_HOST: postgres
+      DB_HOST: kong-postgres
       DB_PORT: 5432
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: konga
-      NODE_ENV: ${KONGA_ENV:-development}
-      KONGA_HOOK_TIMEOUT: 10000
+      NODE_ENV: ${KONGA_ENV:-production}
+      KONGA_HOOK_TIMEOUT: 60000
+      NO_AUTH: "true"
+      TZ: Asia/Jakarta
     volumes:
       - ./logs/konga:/app/logs
     ports:
       - "1337:1337"  # Konga web interface
     depends_on:
-      postgres:
+      kong:
         condition: service_healthy
     networks:
       - kong-net
@@ -139,6 +161,8 @@ services:
   nginx:
     image: nginx:alpine
     container_name: kong-nginx-lb
+    environment:
+      TZ: Asia/Jakarta
     ports:
       - "80:80"      # NGINX proxy to Kong
       - "8080:8001"  # NGINX proxy to Kong Admin (use different port for security)

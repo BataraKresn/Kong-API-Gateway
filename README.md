@@ -2,6 +2,163 @@
 
 Setup lengkap Kong API Gateway Community Edition dengan Konga sebagai web management interface menggunakan PostgreSQL sebagai database.
 
+## Topologi Arsitektur
+
+### Diagram Topologi
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        C1[Web Browser]
+        C2[Mobile App]
+        C3[API Client]
+    end
+    
+    subgraph "Load Balancer Layer"
+        LB[NGINX Load Balancer<br/>:80, :8080]
+    end
+    
+    subgraph "API Gateway Layer"
+        K[Kong API Gateway<br/>:8000, :8001, :8443, :8444]
+    end
+    
+    subgraph "Management Layer"
+        KG[Konga GUI<br/>:1337]
+    end
+    
+    subgraph "Database Layer"
+        PG[PostgreSQL<br/>:5432]
+        PGB[PgBouncer<br/>:6432]
+    end
+    
+    subgraph "Backend Services"
+        B1[Backend API 1]
+        B2[Backend API 2]
+        B3[Backend API N]
+    end
+    
+    subgraph "Bootstrap Services"
+        KB[Kong Bootstrap<br/>Migration Only]
+        KM[Konga Migrate<br/>Migration Only]
+    end
+    
+    C1 --> LB
+    C2 --> LB
+    C3 --> LB
+    
+    LB --> K
+    C1 --> KG
+    
+    K --> B1
+    K --> B2
+    K --> B3
+    
+    K --> PGB
+    KG --> PG
+    PGB --> PG
+    
+    KB -.-> PG
+    KM -.-> PG
+    
+    style KB fill:#ffeb3b,stroke:#f57f17,stroke-width:2px,stroke-dasharray: 5 5
+    style KM fill:#ffeb3b,stroke:#f57f17,stroke-width:2px,stroke-dasharray: 5 5
+    style LB fill:#4caf50,stroke:#388e3c,stroke-width:2px
+    style K fill:#2196f3,stroke:#1976d2,stroke-width:2px
+    style KG fill:#ff9800,stroke:#f57c00,stroke-width:2px
+    style PG fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px
+    style PGB fill:#e91e63,stroke:#c2185b,stroke-width:2px
+```
+
+### ASCII Art Topologi
+
+```
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│   Web Browser       │    │   Mobile App        │    │   API Client        │
+│                     │    │                     │    │                     │
+└──────────┬──────────┘    └──────────┬──────────┘    └──────────┬──────────┘
+           │                          │                          │
+           └──────────────┬───────────────────────┬──────────────┘
+                          │                       │
+                ┌─────────▼─────────┐             │
+                │  NGINX Load       │             │
+                │  Balancer         │             │
+                │  :80, :8080       │             │
+                └─────────┬─────────┘             │
+                          │                       │
+                ┌─────────▼─────────┐             │
+                │  Kong API         │             │
+                │  Gateway          │             │
+                │  :8000,:8001      │             │
+                │  :8443,:8444      │             │
+                └─────────┬─────────┘             │
+                          │                       │
+              ┌───────────┼───────────┐           │
+              │           │           │           │
+    ┌─────────▼─┐  ┌─────────▼─┐  ┌─────────▼─┐   │
+    │Backend    │  │Backend    │  │Backend    │   │
+    │API 1      │  │API 2      │  │API N      │   │
+    └───────────┘  └───────────┘  └───────────┘   │
+                                                  │
+                          ┌─────────────────────────▼─────────────────────┐
+                          │             Management Layer                   │
+                          │                                               │
+                          │  ┌─────────────┐    ┌─────────────────────┐   │
+                          │  │   Konga     │    │   Kong Admin API    │   │
+                          │  │   GUI       │    │   (via NGINX)       │   │
+                          │  │   :1337     │    │   :8080             │   │
+                          │  └─────────────┘    └─────────────────────┘   │
+                          └───────────────────┬─────────────────────────┘
+                                              │
+                          ┌───────────────────▼─────────────────────────┐
+                          │             Database Layer                   │
+                          │                                             │
+                          │  ┌─────────────┐    ┌─────────────────────┐ │
+                          │  │ PgBouncer   │    │    PostgreSQL      │ │
+                          │  │ Connection  │───▶│    :5432            │ │
+                          │  │ Pool :6432  │    │    ┌─────────────┐  │ │
+                          │  └─────────────┘    │    │ Kong DB     │  │ │
+                          │                     │    │ Konga DB    │  │ │
+                          │                     │    └─────────────┘  │ │
+                          │                     └─────────────────────┘ │
+                          └─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Bootstrap Services (Run Once)                        │
+│                                                                             │
+│  ┌─────────────────┐              ┌─────────────────────────────────────┐   │
+│  │ Kong Bootstrap  │─ ─ ─ ─ ─ ─ ▶ │         PostgreSQL                  │   │
+│  │ (Migration)     │              │         (Schema Setup)              │   │
+│  └─────────────────┘              │                                     │   │
+│                                   │  ┌─────────────────────────────────┐ │   │
+│  ┌─────────────────┐              │  │ Konga Migrate                   │ │   │
+│  │ Konga Migrate   │─ ─ ─ ─ ─ ─ ▶ │  │ (Konga Schema Setup)            │ │   │
+│  │ (Preparation)   │              │  └─────────────────────────────────┘ │   │
+│  └─────────────────┘              └─────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Port Mapping
+
+| Service | Internal Port | External Port | Description |
+|---------|---------------|---------------|-------------|
+| NGINX LB | 80 | 80 | Load balanced Kong Proxy |
+| NGINX LB | 8001 | 8080 | Load balanced Kong Admin API |
+| Kong Gateway | 8000 | 8000 | Kong Proxy HTTP |
+| Kong Gateway | 8001 | 8001 | Kong Admin API HTTP |
+| Kong Gateway | 8443 | 8443 | Kong Proxy HTTPS |
+| Kong Gateway | 8444 | 8444 | Kong Admin API HTTPS |
+| Konga GUI | 1337 | 1337 | Web Management Interface |
+| PostgreSQL | 5432 | 5432 | Database Direct Access |
+| PgBouncer | 5432 | 6432 | Connection Pool |
+
+### Network Flow
+
+1. **Client Requests** → NGINX Load Balancer (Port 80)
+2. **Load Balancer** → Kong API Gateway (Port 8000)
+3. **Kong Gateway** → Backend Services (Various Ports)
+4. **Management Access** → Konga GUI (Port 1337)
+5. **Database Access** → PgBouncer (Port 6432) → PostgreSQL (Port 5432)
+
 ## Struktur Project
 
 ### Struktur Awal (sebelum install)
@@ -54,39 +211,116 @@ kong-gateway-api/
 
 ## Services yang Tersedia
 
-1. **PostgreSQL** (postgres:13)
+> **Timezone Configuration**: Semua services yang berjalan kontinyu menggunakan timezone `Asia/Jakarta` untuk konsistensi logging dan timestamp.
+
+1. **PostgreSQL** (postgres:11)
    - Port: 5432
    - Database: `kong` dan `konga` (terpisah dalam satu instance)
    - Volume: Persistent storage untuk data
+   - Timezone: Asia/Jakarta
+   - Health check: pg_isready
 
 2. **PgBouncer** (pgbouncer/pgbouncer:latest)
    - Port: 6432
    - Connection pooling untuk PostgreSQL
    - Mode: Transaction pooling (configurable)
    - Logs: `./logs/pgbouncer/`
+   - Timezone: Asia/Jakarta
 
-3. **Kong API Gateway** (kong:3.4-alpine)
+3. **Kong API Gateway** (kong:3.4)
    - Port 8000: Kong Proxy HTTP
    - Port 8001: Kong Admin API HTTP  
    - Port 8443: Kong Proxy HTTPS
    - Port 8444: Kong Admin API HTTPS
    - Logs: `./logs/kong/`
    - Performance: Auto worker processes, memory cache
+   - Timezone: Asia/Jakarta
+   - Health check: kong health
 
-4. **Kong Bootstrap** (kong:3.4-alpine)
+4. **Kong Bootstrap** (kong:3.4)
    - Service sekali jalan untuk migrasi database
    - Otomatis membuat skema database Kong
+   - **Tidak menggunakan timezone** (run once only)
 
-5. **Konga GUI** (pantsel/konga:latest)
+5. **Konga Migrate** (pantsel/konga:0.14.9)
+   - Service sekali jalan untuk migrasi database Konga
+   - Otomatis membuat skema database Konga
+   - **Tidak menggunakan timezone** (run once only)
+
+6. **Konga GUI** (pantsel/konga:0.14.9)
    - Port 1337: Web interface untuk management Kong
    - Database adapter: PostgreSQL
    - Logs: `./logs/konga/`
+   - Timezone: Asia/Jakarta
+   - Authentication: NO_AUTH mode (production ready)
 
-6. **NGINX Load Balancer** (nginx:alpine)
+7. **NGINX Load Balancer** (nginx:alpine)
    - Port 80: Load balanced Kong Proxy
    - Port 8080: Load balanced Kong Admin API
    - Health checks dan failover
    - Logs: `./logs/nginx/`
+   - Timezone: Asia/Jakarta
+   - Health check: nginx -t
+
+## Konfigurasi Services
+
+### Service Dependencies & Startup Order
+
+```mermaid
+graph TD
+    A[PostgreSQL] --> B[Kong Bootstrap]
+    A --> C[Konga Migrate]
+    B --> D[Kong Gateway]
+    C --> E[Konga GUI]
+    A --> F[PgBouncer]
+    D --> G[NGINX Load Balancer]
+    
+    style A fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px
+    style B fill:#ffeb3b,stroke:#f57f17,stroke-width:2px,stroke-dasharray: 5 5
+    style C fill:#ffeb3b,stroke:#f57f17,stroke-width:2px,stroke-dasharray: 5 5
+    style D fill:#2196f3,stroke:#1976d2,stroke-width:2px
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px
+    style F fill:#e91e63,stroke:#c2185b,stroke-width:2px
+    style G fill:#4caf50,stroke:#388e3c,stroke-width:2px
+```
+
+1. **PostgreSQL** starts first dengan health check
+2. **Kong Bootstrap** & **Konga Migrate** run migrations (parallel, run once)
+3. **Kong Gateway** & **Konga GUI** start after successful migrations
+4. **PgBouncer** starts setelah PostgreSQL ready
+5. **NGINX Load Balancer** starts terakhir setelah Kong ready
+
+### Timezone Configuration
+
+| Service | Timezone | Alasan |
+|---------|----------|---------|
+| PostgreSQL | Asia/Jakarta | Database timestamps dan logging |
+| PgBouncer | Asia/Jakarta | Connection pool logging |
+| Kong Gateway | Asia/Jakarta | API access logs dan error logs |
+| Konga GUI | Asia/Jakarta | Web interface logging |
+| NGINX | Asia/Jakarta | Access logs dan error logs |
+| Kong Bootstrap | *None* | Run once only, tidak perlu timezone |
+| Konga Migrate | *None* | Run once only, tidak perlu timezone |
+
+### Health Checks
+
+| Service | Health Check | Interval | Timeout | Retries |
+|---------|-------------|----------|---------|---------|
+| PostgreSQL | `pg_isready -U postgres` | 30s | 10s | 3 |
+| Kong Gateway | `kong health` | 10s | 10s | 3 |
+| NGINX | `nginx -t` | 30s | 10s | 3 |
+
+### Restart Policies
+
+| Service | Restart Policy | Alasan |
+|---------|---------------|---------|
+| PostgreSQL | unless-stopped | Database perlu persistent |
+| PgBouncer | unless-stopped | Connection pool perlu always running |
+| Kong Gateway | unless-stopped | API Gateway core service |
+| Konga GUI | unless-stopped | Management interface |
+| NGINX | unless-stopped | Load balancer |
+| Kong Bootstrap | no | Migration sekali jalan |
+| Konga Migrate | no | Migration sekali jalan |
 
 ## Cara Penggunaan
 
@@ -390,3 +624,73 @@ Untuk production environment, pertimbangkan:
 - Pastikan Kong, Konga, dan PostgreSQL selalu menggunakan versi terbaru.
 - Periksa changelog untuk mengetahui fitur baru atau perbaikan keamanan.
 - Gunakan tools seperti **Dependabot** atau **Renovate** untuk memantau pembaruan dependencies.
+
+---
+
+## Summary: Kong API Gateway Stack
+
+### Architecture Overview
+
+Kong API Gateway Stack ini menyediakan solusi lengkap enterprise-grade dengan:
+
+- **High Availability**: Load balancing dengan NGINX + health checks
+- **Performance**: Connection pooling dengan PgBouncer
+- **Management**: Web-based GUI dengan Konga
+- **Monitoring**: Comprehensive logging untuk semua services
+- **Timezone**: Konsistensi waktu dengan Asia/Jakarta
+- **Scalability**: Configurable worker processes dan connection limits
+
+### Key Benefits
+
+✅ **Production Ready**: Health checks, restart policies, dan error handling  
+✅ **Easy Management**: Web GUI untuk konfigurasi Kong  
+✅ **Performance Optimized**: Connection pooling dan worker optimization  
+✅ **Monitoring Ready**: Structured logs untuk semua components  
+✅ **Timezone Consistent**: Asia/Jakarta untuk semua persistent services  
+✅ **Database Optimized**: Separate databases dengan connection pooling  
+✅ **Load Balanced**: NGINX front-end untuk high availability  
+
+### Quick Start Summary
+
+```bash
+# Clone repository
+git clone <repo-url> kong-gateway-api
+cd kong-gateway-api
+
+# One command setup
+./install.sh
+
+# Access services
+# Kong Proxy: http://localhost:80
+# Kong Admin: http://localhost:8080  
+# Konga GUI: http://localhost:1337
+```
+
+### Service Port Reference
+
+| Service | Port | Purpose | Access |
+|---------|------|---------|---------|
+| **NGINX** | 80 | Load Balanced Kong Proxy | Public |
+| **NGINX** | 8080 | Load Balanced Kong Admin | Internal |
+| **Kong** | 8000 | Direct Kong Proxy | Internal |
+| **Kong** | 8001 | Direct Kong Admin API | Internal |
+| **Konga** | 1337 | Web Management UI | Internal |
+| **PostgreSQL** | 5432 | Database Direct | Internal |
+| **PgBouncer** | 6432 | Connection Pool | Internal |
+
+### Container Status Quick Check
+
+```bash
+# Check all services
+docker compose ps
+
+# Check logs
+docker compose logs -f [service-name]
+
+# Quick status
+./install.sh --status
+```
+
+---
+
+**🚀 Kong API Gateway Stack is ready for production use!**
