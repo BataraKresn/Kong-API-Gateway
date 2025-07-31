@@ -614,6 +614,125 @@ cat konga-prepare-config.json
 
 > 💡 **Tips**: Method ini otomatis menggunakan credentials dari file `.env` Anda, jadi tidak perlu manual update password.
 
+#### Konfigurasi Migration Mode
+
+Parameter `migrate` dalam file config menentukan bagaimana Konga menangani database schema:
+
+| Mode | Deskripsi | Kapan Digunakan |
+|------|-----------|-----------------|
+| **`alter`** | Membuat tabel baru jika belum ada, mengubah struktur tabel yang sudah ada | ✅ **First time setup**<br>✅ **Schema changes/updates**<br>✅ **Recovery dari corrupted tables** |
+| **`safe`** | Tidak melakukan perubahan pada schema, gunakan tabel yang sudah ada | ✅ **Tabel sudah ada dan valid**<br>✅ **Production environment**<br>✅ **Tidak ingin risiko data loss** |
+| **`drop`** | Hapus semua tabel dan buat ulang (**DANGER**) | ⚠️ **Complete reset only**<br>⚠️ **Development environment**<br>❌ **TIDAK untuk production** |
+
+**Contoh konfigurasi untuk skenario berbeda:**
+
+```bash
+# Untuk setup baru atau recovery (RECOMMENDED)
+"models": {
+  "connection": "default",
+  "migrate": "alter"
+}
+
+# Untuk environment yang sudah stable
+"models": {
+  "connection": "default", 
+  "migrate": "safe"
+}
+
+# Untuk complete reset (HATI-HATI!)
+"models": {
+  "connection": "default",
+  "migrate": "drop"
+}
+```
+
+> ⚠️ **PERINGATAN**: 
+> - Mode `alter` aman untuk most use cases
+> - Mode `safe` gunakan jika yakin schema sudah benar
+> - Mode `drop` akan **MENGHAPUS SEMUA DATA** - gunakan dengan sangat hati-hati!
+
+#### Script Generator untuk Config dengan Mode Berbeda
+
+```bash
+# Function untuk generate config dengan mode tertentu
+generate_konga_config() {
+    local migrate_mode=${1:-alter}
+    source .env
+    
+    cat > konga-prepare-config.json << EOF
+{
+  "connections": {
+    "default": {
+      "adapter": "sails-postgresql",
+      "host": "kong-postgres",
+      "port": 5432,
+      "user": "${POSTGRES_USER}",
+      "password": "${POSTGRES_PASSWORD}",
+      "database": "konga",
+      "poolSize": 10,
+      "ssl": false
+    }
+  },
+  "models": {
+    "connection": "default",
+    "migrate": "${migrate_mode}"
+  }
+}
+EOF
+    
+    echo "Generated konga-prepare-config.json with migrate mode: ${migrate_mode}"
+    echo "Config content:"
+    cat konga-prepare-config.json
+}
+
+# Usage examples:
+generate_konga_config "alter"    # Default - untuk setup baru/recovery
+generate_konga_config "safe"     # Untuk environment stable
+generate_konga_config "drop"     # Untuk complete reset (DANGER!)
+```
+
+#### Best Practices: Pemilihan Migration Mode
+
+**🎯 Rekomendasi berdasarkan skenario:**
+
+| Skenario | Migration Mode | Alasan |
+|----------|----------------|---------|
+| **First time install** | `alter` | Membuat tabel baru dengan aman |
+| **Konga upgrade** | `alter` | Handle schema changes otomatis |
+| **Production restart** | `safe` | Tidak mengubah data yang ada |
+| **Development testing** | `drop` | Reset complete untuk testing |
+| **Recovery dari error** | `alter` | Fix corrupted/missing tables |
+| **Schema sudah perfect** | `safe` | Performa lebih cepat, no changes |
+
+**🔄 Migration Flow Decision:**
+
+```
+┌─ Apakah first time setup? ─ YES → use "alter"
+│
+├─ Apakah tabel sudah ada dan benar? ─ YES → use "safe"  
+│
+├─ Apakah ada schema corruption? ─ YES → use "alter"
+│
+├─ Apakah perlu complete reset? ─ YES → use "drop" (CAREFUL!)
+│
+└─ Default fallback → use "alter"
+```
+
+**⚡ Quick Commands untuk Common Scenarios:**
+
+```bash
+# New installation
+generate_konga_config "alter" && docker run --rm --network=kong-network \
+  -v $(pwd)/konga-prepare-config.json:/app/config/local.json \
+  -e "NODE_ENV=production" pantsel/konga:0.14.9 -c prepare
+
+# Production restart (tabel sudah ada)
+generate_konga_config "safe" && docker-compose restart konga
+
+# Development reset
+generate_konga_config "drop" && ./reset-konga.sh
+```
+
 #### 2. Backup Database Konga (Recommended)
 
 ```bash
@@ -677,6 +796,40 @@ GRANT ALL PRIVILEGES ON DATABASE konga TO postgres;
 # Restart services
 docker-compose up -d
 ```
+
+**Step 4: (Recommended) Reset Schema dengan CASCADE - One Command**
+```bash
+# Reset semua schema dalam database konga (lebih cepat dan aman)
+docker exec -i kong-postgres psql -U postgres -d konga <<EOF
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO public;
+EOF
+```
+
+#### Verifikasi Database Kosong
+
+Setelah mengosongkan database, verifikasi bahwa semua tabel sudah terhapus:
+
+```bash
+# Check apakah ada tabel yang tersisa
+docker exec -it kong-postgres psql -U postgres -d konga -c "\dt"
+
+# Check semua objek dalam database (termasuk views, sequences, dll)
+docker exec -it kong-postgres psql -U postgres -d konga -c "\d"
+
+# Check dengan query detail - harus return empty result
+docker exec -it kong-postgres psql -U postgres -d konga -c \
+"SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog');"
+```
+
+**Output yang diharapkan:**
+- `\dt` → "Did not find any relations."
+- `\d` → "Did not find any relations."  
+- `information_schema.tables` query → Empty result (0 rows)
+
+Jika semua command di atas tidak menunjukkan tabel apapun, database sudah bersih dan siap untuk prepare.
 
 #### 3. Eksekusi Manual Konga Prepare
 
@@ -746,8 +899,36 @@ docker run --rm --network=kong-network alpine ping -c 3 kong-postgres
 
 **Error: Tables already exist**
 ```bash
-# Kosongkan database terlebih dahulu (lihat Step 2 di atas)
-# Atau gunakan migrate mode 'drop' (HATI-HATI: akan hapus semua data!)
+# Option 1: Gunakan migrate mode 'safe' jika tabel sudah benar
+generate_konga_config "safe"
+
+# Option 2: Gunakan migrate mode 'alter' untuk update schema
+generate_konga_config "alter"
+
+# Option 3: Kosongkan database terlebih dahulu (lihat Step 3 di atas)
+# Option 4: Gunakan migrate mode 'drop' (HATI-HATI: akan hapus semua data!)
+generate_konga_config "drop"
+```
+
+**Error: Schema mismatch atau corruption**
+```bash
+# Gunakan mode 'alter' untuk fix schema issues
+generate_konga_config "alter"
+
+# Atau complete reset dengan 'drop'
+generate_konga_config "drop"
+```
+
+**Error: Migration failed**
+```bash
+# Check Konga version compatibility
+docker run --rm pantsel/konga:0.14.9 node --version
+
+# Check database connection first
+docker exec kong-postgres psql -U postgres -d konga -c "SELECT version();"
+
+# Try different migration mode
+generate_konga_config "safe"  # Jika tabel sudah ada
 ```
 
 **Error: Permission denied**
@@ -873,6 +1054,96 @@ docker-compose logs -f konga
 
 # Restart Konga only
 docker-compose restart konga
+
+# Quick database verification (should be empty after reset)
+docker exec -it kong-postgres psql -U postgres -d konga -c "\dt"
+docker exec -it kong-postgres psql -U postgres -d konga -c "\d"
+docker exec -it kong-postgres psql -U postgres -d konga -c \
+"SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog');"
+```
+
+#### Database Reset - Complete Command Set
+
+```bash
+# One-liner untuk complete reset database konga
+docker exec -i kong-postgres psql -U postgres -d konga <<EOF
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO public;
+EOF
+
+# Verification commands untuk memastikan database kosong
+echo "=== Checking tables ==="
+docker exec -it kong-postgres psql -U postgres -d konga -c "\dt"
+
+echo "=== Checking all database objects ==="
+docker exec -it kong-postgres psql -U postgres -d konga -c "\d"
+
+echo "=== Checking via information_schema ==="
+docker exec -it kong-postgres psql -U postgres -d konga -c \
+"SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog');"
+
+echo "=== Expected: All commands should show 'no relations' or empty results ==="
+```
+
+#### Verification Functions
+
+```bash
+# Function untuk check database kosong
+check_konga_database_empty() {
+    echo "🔍 Checking if Konga database is empty..."
+    
+    echo "--- Tables check ---"
+    table_count=$(docker exec -t kong-postgres psql -U postgres -d konga -c "\dt" 2>/dev/null | grep -c "public" || echo "0")
+    
+    echo "--- Objects check ---"  
+    object_count=$(docker exec -t kong-postgres psql -U postgres -d konga -c "\d" 2>/dev/null | grep -c "public" || echo "0")
+    
+    echo "--- Information schema check ---"
+    schema_count=$(docker exec -t kong-postgres psql -U postgres -d konga -c \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog');" \
+    -t | tr -d '[:space:]')
+    
+    if [ "$table_count" = "0" ] && [ "$object_count" = "0" ] && [ "$schema_count" = "0" ]; then
+        echo "✅ Database is empty - ready for prepare"
+        return 0
+    else
+        echo "❌ Database still contains objects:"
+        echo "  Tables: $table_count, Objects: $object_count, Schema tables: $schema_count"
+        return 1
+    fi
+}
+
+# Function untuk check Konga ready setelah prepare
+check_konga_ready() {
+    echo "🔍 Checking if Konga is ready after prepare..."
+    
+    # Check tables created
+    table_count=$(docker exec -t kong-postgres psql -U postgres -d konga -c "\dt" | grep -c "konga" || echo "0")
+    
+    # Check service status
+    service_status=$(docker-compose ps konga --format "table {{.State}}" | tail -n +2 | tr -d '[:space:]')
+    
+    # Check web interface
+    web_status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:1337 || echo "000")
+    
+    echo "  Konga tables: $table_count"
+    echo "  Service status: $service_status" 
+    echo "  Web interface: HTTP $web_status"
+    
+    if [ "$table_count" -gt "0" ] && [ "$service_status" = "running" ] && [ "$web_status" = "200" ]; then
+        echo "✅ Konga is ready!"
+        return 0
+    else
+        echo "❌ Konga not ready yet"
+        return 1
+    fi
+}
+
+# Usage:
+# check_konga_database_empty  # Before reset
+# check_konga_ready          # After prepare
 ```
 
 #### 8. Kapan Menggunakan Manual Prepare?
