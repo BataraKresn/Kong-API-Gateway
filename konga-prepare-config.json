@@ -1,0 +1,18 @@
+{
+  "connections": {
+    "default": {
+      "adapter": "sails-postgresql",
+      "host": "kong-postgres",
+      "port": 5432,
+      "user": "postgres",
+      "password": "kong_password_2024",
+      "database": "konga",
+      "poolSize": 10,
+      "ssl": false
+    }
+  },
+  "models": {
+    "connection": "default",
+    "migrate": "alter"
+  }
+}

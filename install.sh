@@ -107,7 +107,7 @@ POSTGRES_PASSWORD=kong_password_2024
 
 # Konga Environment Configuration  
 # Required by docker-compose.yml for konga service
-KONGA_ENV=production
+NODE_ENV=production
 
 # Kong Performance Configuration
 KONG_NGINX_WORKER_PROCESSES=auto
@@ -153,8 +153,8 @@ validate_env_file() {
         missing_vars+=("POSTGRES_PASSWORD")
     fi
     
-    if ! grep -q "^KONGA_ENV=" .env; then
-        missing_vars+=("KONGA_ENV")
+    if ! grep -q "^NODE_ENV=" .env; then
+        missing_vars+=("NODE_ENV")
     fi
     
     # If any required variables are missing, add them
@@ -176,8 +176,8 @@ validate_env_file() {
                 "POSTGRES_PASSWORD")
                     echo "POSTGRES_PASSWORD=kong_password_2024" >> .env
                     ;;
-                "KONGA_ENV")
-                    echo "KONGA_ENV=production" >> .env
+                "NODE_ENV")
+                    echo "NODE_ENV=production" >> .env
                     ;;
             esac
         done
@@ -325,7 +325,7 @@ display_info() {
     echo "Environment Configuration:"
     echo "• .env file contains database credentials and settings"
     echo "• Modify .env file to customize database passwords"
-    echo "• Required variables: POSTGRES_USER, POSTGRES_PASSWORD, KONGA_ENV"
+    echo "• Required variables: POSTGRES_USER, POSTGRES_PASSWORD, NODE_ENV"
     echo "• Backup created (.env.backup) when missing variables are added"
     echo ""
 }

@@ -116,7 +116,7 @@ services:
   #   image: pantsel/konga:0.14.9
   #   container_name: konga-migrate
   #   environment:
-  #     KONGA_ENV: ${KONGA_ENV:-production}
+  #     NODE_ENV: ${NODE_ENV:-production}
   #     DB_ADAPTER: postgres
   #     DB_HOST: postgres
   #     DB_PORT: 5432
@@ -142,7 +142,7 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: konga
-      NODE_ENV: ${KONGA_ENV:-production}
+      NODE_ENV: ${NODE_ENV}
       KONGA_HOOK_TIMEOUT: 60000
       NO_AUTH: "true"
       TZ: Asia/Jakarta

@@ -404,7 +404,7 @@ File `.env` berisi konfigurasi yang dapat disesuaikan:
 **Database Configuration:**
 - `POSTGRES_USER`: Username database PostgreSQL (default: postgres)
 - `POSTGRES_PASSWORD`: Password database PostgreSQL
-- `KONGA_ENV`: Environment Konga (development/production)
+- `NODE_ENV`: Environment untuk Konga (development/production)
 
 **Kong Performance Tuning:**
 - `KONG_NGINX_WORKER_PROCESSES`: Jumlah worker processes (default: auto)
@@ -520,7 +520,7 @@ Script `clean-logs.sh` tersedia untuk mengelola log files secara otomatis:
 ./install.sh --no-start
 
 # Atau buat manual dengan variable yang diperlukan:
-# POSTGRES_USER, POSTGRES_PASSWORD, KONGA_ENV
+# POSTGRES_USER, POSTGRES_PASSWORD, NODE_ENV
 ```
 
 ### Kong tidak bisa connect ke database
@@ -546,6 +546,371 @@ docker-compose logs kong-bootstrap
 docker-compose down
 rm -rf data/ logs/
 ./install.sh
+```
+
+### Konfigurasi Manual Konga Database
+
+> ⚠️ **PERINGATAN**: Proses ini akan menghapus semua data Konga yang ada. Pastikan untuk backup data penting sebelum melanjutkan.
+
+#### 1. Konga Prepare Config File
+
+Buat file `konga-prepare-config.json` untuk konfigurasi manual Konga:
+
+```bash
+# Buat file konfigurasi Konga
+cat > konga-prepare-config.json << 'EOF'
+{
+  "connections": {
+    "postgres": {
+      "adapter": "postgresql",
+      "host": "kong-postgres",
+      "port": 5432,
+      "user": "postgres",
+      "password": "kong_password_2024",
+      "database": "konga"
+    }
+  },
+  "models": {
+    "connection": "postgres",
+    "migrate": "alter"
+  }
+}
+EOF
+```
+
+> 📝 **Catatan**: 
+> - Pastikan password sesuai dengan yang ada di file `.env` Anda
+> - Jika menggunakan credentials berbeda, update file config di atas
+> - Host `kong-postgres` sesuai dengan container name di docker-compose.yml
+
+#### Alternatif: Generate config dari .env file
+
+```bash
+# Generate config otomatis dari .env file
+source .env
+cat > konga-prepare-config.json << EOF
+{
+  "connections": {
+    "postgres": {
+      "adapter": "postgresql",
+      "host": "kong-postgres", 
+      "port": 5432,
+      "user": "${POSTGRES_USER}",
+      "password": "${POSTGRES_PASSWORD}",
+      "database": "konga"
+    }
+  },
+  "models": {
+    "connection": "postgres",
+    "migrate": "alter"
+  }
+}
+EOF
+
+# Verify config file dibuat dengan benar
+echo "Generated config:"
+cat konga-prepare-config.json
+```
+
+> 💡 **Tips**: Method ini otomatis menggunakan credentials dari file `.env` Anda, jadi tidak perlu manual update password.
+
+#### 2. Backup Database Konga (Recommended)
+
+```bash
+# Backup database konga sebelum reset (opsional tapi direkomendasikan)
+docker exec kong-postgres pg_dump -U postgres konga > konga_backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Backup bisa di-restore dengan:
+# docker exec -i kong-postgres psql -U postgres konga < konga_backup_YYYYMMDD_HHMMSS.sql
+```
+
+#### 3. Mengosongkan Database Konga (Jika Diperlukan)
+
+**Step 1: Connect ke PostgreSQL container**
+```bash
+# Connect ke database PostgreSQL
+docker exec -it kong-postgres psql -U postgres -d konga
+```
+
+**Step 2: Drop semua tabel Konga**
+```sql
+-- List semua tabel Konga
+\dt
+
+-- Drop tabel utama Konga (hati-hati dengan urutan karena foreign keys)
+DROP TABLE IF EXISTS konga_api_health_checks CASCADE;
+DROP TABLE IF EXISTS konga_netdata CASCADE;
+DROP TABLE IF EXISTS konga_users CASCADE;
+DROP TABLE IF EXISTS konga_passports CASCADE;
+DROP TABLE IF EXISTS konga_settings CASCADE;
+DROP TABLE IF EXISTS konga_kong_nodes CASCADE;
+DROP TABLE IF EXISTS konga_kong_services CASCADE;
+DROP TABLE IF EXISTS konga_kong_routes CASCADE;
+DROP TABLE IF EXISTS konga_kong_consumers CASCADE;
+DROP TABLE IF EXISTS konga_kong_plugins CASCADE;
+DROP TABLE IF EXISTS konga_kong_upstreams CASCADE;
+DROP TABLE IF EXISTS konga_kong_targets CASCADE;
+DROP TABLE IF EXISTS konga_kong_certificates CASCADE;
+DROP TABLE IF EXISTS konga_kong_snis CASCADE;
+
+-- Verify semua tabel sudah terhapus
+\dt
+
+-- Exit dari psql
+\q
+```
+
+**Step 3: (Alternatif) Reset database konga secara complete**
+```bash
+# Stop services dulu
+docker-compose down
+
+# Connect dan drop/recreate database
+docker exec -it kong-postgres psql -U postgres
+
+# Di dalam psql:
+DROP DATABASE IF EXISTS konga;
+CREATE DATABASE konga;
+GRANT ALL PRIVILEGES ON DATABASE konga TO postgres;
+\q
+
+# Restart services
+docker-compose up -d
+```
+
+#### 3. Eksekusi Manual Konga Prepare
+
+**Method 1: Menggunakan docker run dengan config file**
+```bash
+# Pastikan konga-prepare-config.json sudah dibuat
+# Jalankan prepare command secara manual
+docker run --rm \
+  --network=kong-network \
+  -v $(pwd)/konga-prepare-config.json:/app/config/local.json \
+  -e "NODE_ENV=production" \
+  pantsel/konga:0.14.9 \
+  -c prepare
+```
+
+**Method 2: Menggunakan service yang ada (Recommended)**
+```bash
+# Pastikan services PostgreSQL sudah running
+docker-compose up -d postgres
+
+# Jalankan konga migrate service
+docker-compose run --rm konga-migrate
+
+# Atau jika service konga-migrate tidak ada, gunakan konga service
+docker-compose run --rm konga -c prepare
+```
+
+**Method 3: Menggunakan service konga existing**
+```bash
+# Stop konga service dulu jika sedang running
+docker-compose stop konga
+
+# Jalankan prepare command
+docker-compose run --rm \
+  -e "NODE_ENV=production" \
+  konga \
+  node ./bin/konga.js prepare
+```
+
+#### 4. Verifikasi Prepare Berhasil
+
+```bash
+# Check tabel Konga sudah dibuat
+docker exec -it kong-postgres psql -U postgres -d konga -c "\dt"
+
+# Check logs prepare command
+docker-compose logs konga
+
+# Restart konga service
+docker-compose restart konga
+
+# Check konga bisa diakses
+curl -f http://localhost:1337 || echo "Konga belum ready"
+```
+
+#### 5. Troubleshooting Konga Prepare
+
+**Error: Database connection failed**
+```bash
+# Check PostgreSQL running dan accessible
+docker-compose ps postgres
+docker-compose logs postgres
+
+# Check network connectivity
+docker run --rm --network=kong-network alpine ping -c 3 kong-postgres
+```
+
+**Error: Tables already exist**
+```bash
+# Kosongkan database terlebih dahulu (lihat Step 2 di atas)
+# Atau gunakan migrate mode 'drop' (HATI-HATI: akan hapus semua data!)
+```
+
+**Error: Permission denied**
+```bash
+# Check file permission untuk config
+chmod 644 konga-prepare-config.json
+
+# Check directory mount permission
+ls -la $(pwd)/konga-prepare-config.json
+```
+
+#### 6. Script Automation untuk Konga Reset
+
+Untuk memudahkan proses reset Konga, buat script `reset-konga.sh`:
+
+```bash
+cat > reset-konga.sh << 'EOF'
+#!/bin/bash
+
+set -e
+
+echo "🔄 Konga Database Reset Script"
+echo "=============================="
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Check if config file exists
+if [ ! -f "konga-prepare-config.json" ]; then
+    echo -e "${YELLOW}Creating konga-prepare-config.json...${NC}"
+    cat > konga-prepare-config.json << 'JSON'
+{
+  "connections": {
+    "postgres": {
+      "adapter": "postgresql", 
+      "host": "kong-postgres",
+      "port": 5432,
+      "user": "postgres",
+      "password": "kong_password_2024",
+      "database": "konga"
+    }
+  },
+  "models": {
+    "connection": "postgres",
+    "migrate": "alter"
+  }
+}
+JSON
+fi
+
+# Backup current database
+echo -e "${YELLOW}Creating backup...${NC}"
+docker exec kong-postgres pg_dump -U postgres konga > konga_backup_$(date +%Y%m%d_%H%M%S).sql 2>/dev/null || echo "No existing data to backup"
+
+# Stop konga service
+echo -e "${YELLOW}Stopping Konga service...${NC}"
+docker-compose stop konga
+
+# Reset database tables
+echo -e "${YELLOW}Resetting database tables...${NC}"
+docker exec -i kong-postgres psql -U postgres -d konga << 'SQL'
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO public;
+SQL
+
+# Run prepare command
+echo -e "${YELLOW}Running Konga prepare...${NC}"
+docker run --rm \
+  --network=kong-network \
+  -v $(pwd)/konga-prepare-config.json:/app/config/local.json \
+  -e "NODE_ENV=production" \
+  pantsel/konga:0.14.9 \
+  -c prepare
+
+# Start konga service
+echo -e "${YELLOW}Starting Konga service...${NC}"
+docker-compose start konga
+
+# Wait and check
+echo -e "${YELLOW}Waiting for Konga to be ready...${NC}"
+sleep 10
+
+if curl -sf http://localhost:1337 > /dev/null; then
+    echo -e "${GREEN}✅ Konga reset completed successfully!${NC}"
+    echo -e "${GREEN}🌐 Konga available at: http://localhost:1337${NC}"
+else
+    echo -e "${RED}❌ Konga might not be ready yet. Check logs:${NC}"
+    echo "docker-compose logs konga"
+fi
+EOF
+
+# Make script executable
+chmod +x reset-konga.sh
+
+# Usage
+./reset-konga.sh
+```
+
+#### 7. Quick Commands Reference
+
+```bash
+# Quick reset Konga (menggunakan script di atas)
+./reset-konga.sh
+
+# Manual prepare (tanpa reset database)
+docker run --rm \
+  --network=kong-network \
+  -v $(pwd)/konga-prepare-config.json:/app/config/local.json \
+  -e "NODE_ENV=production" \
+  pantsel/konga:0.14.9 \
+  -c prepare
+
+# Check Konga tables
+docker exec kong-postgres psql -U postgres -d konga -c "\dt"
+
+# View Konga logs
+docker-compose logs -f konga
+
+# Restart Konga only
+docker-compose restart konga
+```
+
+#### 8. Kapan Menggunakan Manual Prepare?
+
+**Gunakan manual prepare jika:**
+- ✅ Konga service gagal start dengan error database
+- ✅ Tabel Konga corrupt atau tidak konsisten
+- ✅ Migration otomatis gagal
+- ✅ Perlu reset Konga configuration
+- ✅ Upgrade Konga versi yang membutuhkan schema changes
+
+**Tidak perlu manual prepare jika:**
+- ❌ First time install (gunakan `./install.sh`)
+- ❌ Normal restart services
+- ❌ Hanya ingin restart Kong Gateway
+
+#### 9. Verification Checklist
+
+Setelah manual prepare, pastikan:
+
+```bash
+# 1. Check PostgreSQL terhubung
+docker exec kong-postgres psql -U postgres -c "\l" | grep konga
+
+# 2. Check tabel Konga ada
+docker exec kong-postgres psql -U postgres -d konga -c "\dt"
+
+# 3. Check Konga service running
+docker-compose ps konga
+
+# 4. Check Konga logs tidak ada error
+docker-compose logs konga | tail -20
+
+# 5. Check Konga web interface accessible
+curl -I http://localhost:1337
+
+# 6. Check dari browser
+# Buka http://localhost:1337 dan pastikan halaman login muncul
 ```
 
 ### Permissions issues dengan mounted directories
