@@ -5,11 +5,9 @@ Setup lengkap Kong API Gateway Community Edition dengan Konga sebagai web manage
 ## Topologi Arsitektur
 
 ### Diagram Topologi
-```mermaid
 
 ![Diagram Topologi](images/diagram.png)
 
-```
 ### ASCII Art Topologi
 
 ```
