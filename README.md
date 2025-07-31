@@ -5,67 +5,11 @@ Setup lengkap Kong API Gateway Community Edition dengan Konga sebagai web manage
 ## Topologi Arsitektur
 
 ### Diagram Topologi
-graph TB
-    subgraph "Client Layer"
-        C1[Web Browser]
-        C2[Mobile App]
-        C3[API Client]
-    end
-    
-    subgraph "Load Balancer Layer"
-        LB[NGINX Load Balancer:80, :8080]
-    end
-    
-    subgraph "API Gateway Layer"
-        K[Kong API Gateway:8000, :8001, :8443, :8444]
-    end
-    
-    subgraph "Management Layer"
-        KG[Konga GUI:1337]
-    end
-    
-    subgraph "Database Layer"
-        PG[PostgreSQL:5432]
-        PGB[PgBouncer:6432]
-    end
-    
-    subgraph "Backend Services"
-        B1[Backend API 1]
-        B2[Backend API 2]
-        B3[Backend API N]
-    end
-    
-    subgraph "Bootstrap Services"
-        KB[Kong Bootstrap Migration Only]
-        KM[Konga Migrate Migration Only]
-    end
-    
-    C1 --> LB
-    C2 --> LB
-    C3 --> LB
-    
-    LB --> K
-    C1 --> KG
-    
-    K --> B1
-    K --> B2
-    K --> B3
-    
-    K --> PGB
-    KG --> PG
-    PGB --> PG
-    
-    KB -.-> PG
-    KM -.-> PG
-    
-    style KB fill:#ffeb3b,stroke:#f57f17,stroke-width:2px,stroke-dasharray: 5 5
-    style KM fill:#ffeb3b,stroke:#f57f17,stroke-width:2px,stroke-dasharray: 5 5
-    style LB fill:#4caf50,stroke:#388e3c,stroke-width:2px
-    style K fill:#2196f3,stroke:#1976d2,stroke-width:2px
-    style KG fill:#ff9800,stroke:#f57c00,stroke-width:2px
-    style PG fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px
-    style PGB fill:#e91e63,stroke:#c2185b,stroke-width:2px
+```mermaid
 
+![Diagram Topologi](images/diagram.png)
+
+```
 ### ASCII Art Topologi
 
 ```
@@ -872,14 +816,17 @@ docker-compose run --rm \
 # Check tabel Konga sudah dibuat
 docker exec -it kong-postgres psql -U postgres -d konga -c "\dt"
 
-# Check logs prepare command
-docker-compose logs konga
+# Check service status
+docker-compose ps konga
 
-# Restart konga service
-docker-compose restart konga
+# Check Konga logs tidak ada error
+docker-compose logs konga | tail -20
 
-# Check konga bisa diakses
-curl -f http://localhost:1337 || echo "Konga belum ready"
+# Check Konga web interface accessible
+curl -I http://localhost:1337
+
+# Check dari browser
+# Buka http://localhost:1337 dan pastikan halaman login muncul
 ```
 
 #### 5. Troubleshooting Konga Prepare
@@ -1323,7 +1270,3 @@ docker compose logs -f [service-name]
 # Quick status
 ./install.sh --status
 ```
-
----
-
-**🚀 Kong API Gateway Stack is ready for production use!**
