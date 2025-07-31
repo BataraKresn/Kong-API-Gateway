@@ -5,8 +5,6 @@ Setup lengkap Kong API Gateway Community Edition dengan Konga sebagai web manage
 ## Topologi Arsitektur
 
 ### Diagram Topologi
-
-```mermaid
 graph TB
     subgraph "Client Layer"
         C1[Web Browser]
@@ -15,20 +13,20 @@ graph TB
     end
     
     subgraph "Load Balancer Layer"
-        LB[NGINX Load Balancer<br/>:80, :8080]
+        LB[NGINX Load Balancer:80, :8080]
     end
     
     subgraph "API Gateway Layer"
-        K[Kong API Gateway<br/>:8000, :8001, :8443, :8444]
+        K[Kong API Gateway:8000, :8001, :8443, :8444]
     end
     
     subgraph "Management Layer"
-        KG[Konga GUI<br/>:1337]
+        KG[Konga GUI:1337]
     end
     
     subgraph "Database Layer"
-        PG[PostgreSQL<br/>:5432]
-        PGB[PgBouncer<br/>:6432]
+        PG[PostgreSQL:5432]
+        PGB[PgBouncer:6432]
     end
     
     subgraph "Backend Services"
@@ -38,8 +36,8 @@ graph TB
     end
     
     subgraph "Bootstrap Services"
-        KB[Kong Bootstrap<br/>Migration Only]
-        KM[Konga Migrate<br/>Migration Only]
+        KB[Kong Bootstrap Migration Only]
+        KM[Konga Migrate Migration Only]
     end
     
     C1 --> LB
@@ -67,7 +65,6 @@ graph TB
     style KG fill:#ff9800,stroke:#f57c00,stroke-width:2px
     style PG fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px
     style PGB fill:#e91e63,stroke:#c2185b,stroke-width:2px
-```
 
 ### ASCII Art Topologi
 
